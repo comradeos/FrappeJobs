@@ -1,0 +1,125 @@
+services:
+  db:
+    image: mariadb:10.6
+    container_name: frappejobs-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+    ports:
+      - "${DB_PORT}:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-cache:
+    image: redis:7-alpine
+    container_name: frappejobs-redis-cache
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_CACHE_PORT}:6379"
+    volumes:
+      - redis_cache_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-queue:
+    image: redis:7-alpine
+    container_name: frappejobs-redis-queue
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_QUEUE_PORT}:6379"
+    volumes:
+      - redis_queue_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-socketio:
+    image: redis:7-alpine
+    container_name: frappejobs-redis-socketio
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_SOCKETIO_PORT}:6379"
+    volumes:
+      - redis_socketio_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  frappe:
+    image: frappe/bench:latest
+    container_name: frappejobs-frappe
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+      redis-socketio:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      REDIS_CACHE: redis://redis-cache:6379
+      REDIS_QUEUE: redis://redis-queue:6379
+      REDIS_SOCKETIO: redis://redis-socketio:6379
+    ports:
+      - "${FRAPPE_PORT}:8000"
+    volumes:
+      - frappe_bench_data:/home/frappe/frappe-bench
+      - ./:/workspace
+    command: ["bash", "-lc", "cd /home/frappe/frappe-bench/instance && bench serve --port 8000"]
+
+  frappe-worker:
+    image: frappe/bench:latest
+    container_name: frappejobs-frappe-worker
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+      redis-socketio:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      REDIS_CACHE: redis://redis-cache:6379
+      REDIS_QUEUE: redis://redis-queue:6379
+      REDIS_SOCKETIO: redis://redis-socketio:6379
+    volumes:
+      - frappe_bench_data:/home/frappe/frappe-bench
+      - ./:/workspace
+    command: ["bash", "-lc", "cd /home/frappe/frappe-bench/instance && bench worker --queue default,short,long"]
+
+volumes:
+  db_data:
+  redis_cache_data:
+  redis_queue_data:
+  redis_socketio_data:
+  frappe_bench_data:
